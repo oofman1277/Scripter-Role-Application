@@ -1,0 +1,123 @@
+---- Services ----
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local UIS = game:GetService('UserInputService')
+local Players = game:GetService('Players')
+local FrameworkClient = require(ReplicatedStorage["FPS Framework"].Scripts.Client)
+local Framework = ReplicatedStorage['FPS Framework']
+local RunService = game:GetService('RunService')
+local ContentProvider = game:GetService('ContentProvider')
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+local perFrameConnection
+local inputBeganDetectionConnection
+local inputEndedDetectionConnection
+
+UIS.MouseIconEnabled = false
+
+warn('loaded')
+
+player.CharacterAdded:Connect(function(character)
+	
+	character:WaitForChild('Humanoid').Died:Connect(function() -- If the player dies, destroy all viewmodels to prevent errors.
+		player.Backpack:ClearAllChildren()
+	
+		for i,v in character:GetChildren() do
+			if v:IsA('Tool') then
+				v:Destroy()
+			end
+
+			if v:GetAttribute('IsViewmodel') then
+				v:Destroy()
+			end
+		end
+
+		FrameworkClient:RemoveViewmodels(player)
+		player.CameraMode = Enum.CameraMode.Classic
+	end)
+	
+	character.ChildAdded:Connect(function(child) -- If the player spawns with a tool, create a viewmodel for it, and add all appropriate animations
+		if not player.Character then return end
+		
+		if child:IsA('Tool') and child:GetAttribute('IsGun') then
+			local viewModel = FrameworkClient:CreateViewModel(child.Name)
+			
+			local startAiming = false
+			local startRunning = false
+			
+			perFrameConnection = RunService.RenderStepped:Connect(function()
+				if not viewModel then return end
+				
+				FrameworkClient:AttatchViewModel(viewModel)
+				FrameworkClient:AddSwayAnimation()
+				FrameworkClient:AddWalkAnimation()
+				
+				if startAiming == true then
+					FrameworkClient:StartAiming(viewModel)
+				else
+					FrameworkClient:StopAiming(viewModel)
+				end
+			end)
+			
+			inputBeganDetectionConnection = UIS.InputBegan:Connect(function(input) -- Listen for inputs to know when to aim, run etc
+				if input.UserInputType == Enum.UserInputType.MouseButton1 then
+					if not player.Character then return end
+					FrameworkClient:ShootBullet(viewModel)
+					FrameworkClient:AddShootingAnimations(viewModel)
+				end
+				
+				if input.UserInputType == Enum.UserInputType.MouseButton2 then
+					startAiming = true
+					Framework["Remote Events"].Aim:FireServer(true)
+				end
+				
+				if input.KeyCode == Enum.KeyCode.LeftShift then
+					FrameworkClient:StartRunning()
+				end
+				
+				if input.KeyCode == Enum.KeyCode.R then
+					FrameworkClient:AttemptReload(viewModel)
+				end
+			end)
+			
+			inputEndedDetectionConnection = UIS.InputEnded:Connect(function(input)
+				if not player.Character then return end
+				
+				if input.UserInputType == Enum.UserInputType.MouseButton2 then
+					startAiming = false
+					Framework["Remote Events"].Aim:FireServer(false)
+				end
+			
+				if input.KeyCode == Enum.KeyCode.LeftShift then
+					FrameworkClient:StopRunning()
+				end
+			end)
+			
+		end
+	end)
+
+	player.Character.ChildRemoved:Connect(function(child) -- If the current tool is unequipped, then destroy the appropriate viewmodels, revert any changes to the player and close all connections.
+		if child:IsA('Tool') and child:GetAttribute('IsGun') then
+
+			if perFrameConnection then
+				perFrameConnection:Disconnect()
+			end
+			
+			if inputBeganDetectionConnection then
+				inputBeganDetectionConnection:Disconnect()
+			end
+			
+			if inputEndedDetectionConnection then
+				inputEndedDetectionConnection:Disconnect()
+			end
+			
+			local viewModel = camera:FindFirstChild(child.Name)
+			
+			if viewModel and viewModel:GetAttribute('IsGun') then
+				Framework["Remote Events"].UnequipViewmodel:FireServer(viewModel)
+				FrameworkClient:RemoveViewmodels()
+			end
+		end
+	end)
+end)
