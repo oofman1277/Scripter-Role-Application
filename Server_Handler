@@ -1,0 +1,57 @@
+---- SHORTCUT VARIABLES ----
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local Players = game:GetService('Players')
+
+local framework = ReplicatedStorage["FPS Framework"]
+local events = framework["Remote Events"]
+local module = require(framework.Scripts.Server)
+
+---- PREPARATIONS ----
+module:DisableArmCollision() -- Disables collision between the viewmodel and player
+
+Players.PlayerAdded:Connect(function(player) -- Loads the character in at a delay to ensure everything loads, and creates the folder tracking each players ammo.
+	task.wait(3)
+	player:LoadCharacter()
+	task.wait()
+	module:CreateAmmoStorage(player)
+end)
+
+---- EVENT LISTENERS ----
+events.FireGun.OnServerEvent:Connect(function(player, gunName, rayInstance, rayPosition) -- When a client fires their gun, this event is fired to damage any hit instances, subtract a bullet from its magazine, and create a hitmarker wherever the raycast hit.
+	local viewModel = module:SearchForViewmodel(player.Character)
+	local ammoFolder = player:FindFirstChild('Ammo'):FindFirstChild(gunName)
+	local magazine = ammoFolder:FindFirstChild('Magazine')
+	
+	if magazine and magazine.Value > 0 then
+	
+		if gunName and rayInstance and rayPosition then
+			module:BulletHit(rayInstance, rayPosition, gunName) -- Initialises function to damage whatever the ray it and create a hitmarker.
+		end
+		module:AddServerFireAnimations(player, viewModel) -- Plays the firing animation for the serverside viewmodel
+		
+		magazine.Value -= 1
+	end
+end)
+
+events.UnequipViewmodel.OnServerEvent:Connect(function(player) -- Destroys all viewmodels when a player has unequipped any gun applicable.
+	module:DestroyViewmodel(player)
+end)
+
+events.CreateViewmodel.OnServerEvent:Connect(function(player, viewModel) -- Creates the server sided viewmodel whenever a player equips a gun
+	module:CreateServerSideViewModel(player.Character, viewModel)
+end)
+
+events.UpdateViewmodel.OnServerEvent:Connect(function(player, rayEnd) -- Updates the CFrame (position and orientation) of the server-side viewmodel according to the client-sided viewmodel.
+	module:UpdateServerSideViewModel(player, rayEnd)
+end)
+
+events.Reload.OnServerEvent:Connect(function(player, gunName) -- Reloads the players magazine by setting its value to the maximum amount of ammo allowed.
+	module:Reload(player, gunName)
+end)
+
+events.Aim.OnServerEvent:Connect(function(player, toggle) -- Searches for the viewmodels, slightly moves the viewmodel back and plays an animation for the players character to create the aiming effect.
+	local viewModel = module:SearchForViewmodel(player.Character)
+	
+	if not viewModel then warn('Cannot find VM') return end
+	module:AddAimAnimations(player, viewModel, toggle)
+end)
