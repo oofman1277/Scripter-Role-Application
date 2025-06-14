@@ -104,7 +104,7 @@ function gun:AddWalkAnimation() -- Enables the bobbing of the viewmodel when wal
 		
 		if moveDirection > 0 then
 			if player.Character.Humanoid.WalkSpeed == 16 then
-				walkCF = walkCF:Lerp(CFrame.new((math.cos(tick() * 5) * 0.125 * moveDirection) * moveDirection, (math.cos(tick() * 10) * 0.175 * moveDirection) * moveDirection, (math.cos(tick() * 1) * 0.005 * moveDirection) * moveDirection), .1)
+				walkCF = walkCF:Lerp(CFrame.new((math.cos(tick() * 5) * 0.125 * moveDirection) * moveDirection, (math.cos(tick() * 10) * 0.175 * moveDirection) * moveDirection, (math.cos(tick() * 1) * 0.005 * moveDirection) * moveDirection), .1) -- Creates a bobbing animation utilising cosine, graphs and tick, by using the cosine function on tick, and since tick is always changing, the produced graph is in a bobbing motion. I multiply these values by certain amounts to get the perfect speed and movement amount, and multiply it all by the characters velocity to ensure the speed matches with how fast the player is moving. 
 				runCF = runCF:Lerp(CFrame.new(), .1)
 			elseif 	player.Character.Humanoid.WalkSpeed == 24 then
 				walkCF = walkCF:Lerp(CFrame.new((math.cos(tick() * 10) * 0.25 * moveDirection) * moveDirection, (math.cos(tick() * 20) * 0.325 * moveDirection) * moveDirection, (math.cos(tick() * 1) * 0.005 * moveDirection) * moveDirection), .1)
