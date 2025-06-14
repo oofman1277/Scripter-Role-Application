@@ -1,0 +1,271 @@
+local gun = {}
+
+---- Shortcut Variables ----
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local RunService = game:GetService('RunService')
+local UserInputService = game:GetService('UserInputService')
+local TweenService = game:GetService('TweenService')
+local Debris = game:GetService('Debris')
+local Players = game:GetService('Players')
+
+local framework = ReplicatedStorage["FPS Framework"]
+local viewmodels = framework.Viewmodels
+local events = framework["Remote Events"]
+
+local camera = workspace.CurrentCamera
+local player = Players.LocalPlayer
+
+---- CFrames ----
+local swayCF = CFrame.new()
+local walkCF = CFrame.new()
+local aimCF = CFrame.new()
+local recoilCF = CFrame.new()
+local vmRecoilCF = CFrame.new()
+local runCF = CFrame.new()
+
+local previousSwayCF = CFrame.new() 
+local aimGoal = CFrame.new()
+
+---- Predefined Functions ----
+local function vmRecoil() -- Makes the actual viewmodel move back when firing, imitating recoil. Put into function form to allow a new thread to be easily made for it, to not intervene with other processes.
+	vmRecoilCF += Vector3.new(0, 0, 0.4)
+
+	for i = 1, 20 do
+		vmRecoilCF -= Vector3.new(0, 0 , 0.02)
+		task.wait()
+	end
+end
+
+---- Framework ----
+function gun:CreateViewModel(gunName) -- Creates a viewmodel and changes any necessary preparations for it
+	if gunName and player and player.Character and player.Character:FindFirstChild('Humanoid').Health > 0 then
+		local viewModel = framework.Viewmodels:FindFirstChild(gunName)
+		equipped = true
+		viewModel = viewModel:Clone()
+		viewModel.Parent = workspace.CurrentCamera
+		
+		local character = player.Character
+		
+		if character then
+			local shirt = character:FindFirstChild('Shirt')
+			
+			shirt = shirt:Clone()
+			shirt.Parent = viewModel
+		end
+		
+		task.wait()
+		viewModel['Left Arm'].CanCollide = false
+		viewModel['Right Arm'].CanCollide = false
+		
+		events.CreateViewmodel:FireServer(viewModel.Name) -- Sends a request to make the serverside viewmodel
+		player.CameraMode = Enum.CameraMode.LockFirstPerson
+		
+		return viewModel
+	end
+end
+
+function gun:AttatchViewModel(viewModel) -- Attatches the viewmodel to the camera, Meant to be constantly ran as a function, rather then looped within the function
+	if player and player.Character and player.Character:FindFirstChild('Humanoid').Health > 0 then
+		local camera = workspace.CurrentCamera
+		local humanoidRootPart = viewModel:FindFirstChild('HumanoidRootPart')
+
+		humanoidRootPart.CFrame = camera.CFrame * swayCF * walkCF * aimCF * runCF * vmRecoilCF
+		
+		-- Serverside Raycast, to determine the direction of the viewmodel --
+		local params = RaycastParams.new()
+		params.FilterDescendantsInstances = {player.Character, camera}
+		
+		local raycastResult = workspace:Raycast(camera.CFrame.Position, camera.CFrame.LookVector * 1000, params) -- Fires a raycast from the camera to determine the CFrame for the server-sided viewmodel.
+		
+		if raycastResult then
+			local endpoint = raycastResult.Position
+			events.UpdateViewmodel:FireServer(endpoint)
+		else
+			local endpoint = camera.CFrame.Position + camera.CFrame.LookVector * 1000
+			events.UpdateViewmodel:FireServer(endpoint)
+		end
+	end
+end
+
+function gun:AddSwayAnimation() -- Enables the small delay of the viewmodel when moving the camera to imitate sway and realism.
+	local rot = camera.CFrame:ToObjectSpace(previousSwayCF)
+	local X,Y,Z = rot:ToOrientation()
+	
+	local pos = camera.CFrame.Position
+
+	swayCF = swayCF:Lerp(CFrame.Angles(math.sin(X) * 0.75, math.sin(Y) * 1, math.sin(Z) * 4), .1) -- the Swaying CFrame Calculations
+	previousSwayCF = camera.CFrame
+end
+
+function gun:AddWalkAnimation() -- Enables the bobbing of the viewmodel when walking, and alters the settings depending on the state (walking, running, aiming)
+	if player and player.Character and player.Character:FindFirstChild('Humanoid').Health > 0 then
+		local moveDirection = player.Character:FindFirstChild('HumanoidRootPart').Velocity.Magnitude
+		moveDirection = moveDirection / player.Character:FindFirstChild('Humanoid').WalkSpeed
+		
+		if moveDirection > 0 then
+			if player.Character.Humanoid.WalkSpeed == 16 then
+				walkCF = walkCF:Lerp(CFrame.new((math.cos(tick() * 5) * 0.125 * moveDirection) * moveDirection, (math.cos(tick() * 10) * 0.175 * moveDirection) * moveDirection, (math.cos(tick() * 1) * 0.005 * moveDirection) * moveDirection), .1)
+				runCF = runCF:Lerp(CFrame.new(), .1)
+			elseif 	player.Character.Humanoid.WalkSpeed == 24 then
+				walkCF = walkCF:Lerp(CFrame.new((math.cos(tick() * 10) * 0.25 * moveDirection) * moveDirection, (math.cos(tick() * 20) * 0.325 * moveDirection) * moveDirection, (math.cos(tick() * 1) * 0.005 * moveDirection) * moveDirection), .1)
+				runCF = runCF:Lerp(CFrame.Angles(math.rad(-10), math.rad(50), 0), .1)
+			elseif player.Character.Humanoid.WalkSpeed == 6 then
+				moveDirection = moveDirection / 3
+				walkCF = walkCF:Lerp(CFrame.new((math.cos(tick() * 5) * 0.125 * moveDirection) * moveDirection, (math.cos(tick() * 10) * 0.175 * moveDirection) * moveDirection, (math.cos(tick() * 1) * 0.005 * moveDirection) * moveDirection), .1)
+				runCF = runCF:Lerp(CFrame.new(), .1)
+			end
+		else
+			walkCF = walkCF:Lerp(CFrame.new(), .1)
+			runCF = runCF:Lerp(CFrame.new(), .1)
+		end
+	end
+end
+
+
+function gun:StartRunning() -- Self explanator, changes the walkspeed of the player to be faster.
+	local player = Players.LocalPlayer
+	local character = player.Character
+
+	character.Humanoid.WalkSpeed = 24
+end
+
+function gun:StopRunning() -- Reverts players walkspeed back to original speed
+	local player = Players.LocalPlayer
+	local character = player.Character
+	
+	character.Humanoid.WalkSpeed = 16
+end
+
+function gun:StartAiming(viewModel) -- Moves the camera to the designated aim psition, Slows down the walkspeed to be much slower and plays a sound of rustling clothes for realism
+	if equipped == false then return end
+	local humanoid = player.Character:FindFirstChild('Humanoid')
+
+	aimGoal = viewModel.aimPart.CFrame:ToObjectSpace(viewModel:FindFirstChild('HumanoidRootPart').CFrame)
+	aimCF = aimCF:Lerp(aimGoal, .2)
+	
+	local sound = Instance.new('Sound')
+	sound.SoundId = 'rbxassetid://70957602457323'
+	sound.Parent = viewModel:FindFirstChild('aimPart')
+	sound:Play()
+	sound:Destroy()
+
+	humanoid.WalkSpeed = 6
+end
+
+function gun:StopAiming(viewModel) -- Reverts camera back to normal, plays a sound of the character stopping to aim and reverts the walkspeed back to normal.
+	local humanoid = player.Character:FindFirstChild('Humanoid')
+
+	aimGoal = CFrame.new()
+	local sound = Instance.new('Sound')
+	sound.SoundId = 'rbxassetid://133191353379097'
+	sound.Parent = viewModel:FindFirstChild('aimPart')
+	sound:Play()
+	sound:Destroy()
+
+	aimCF = aimCF:Lerp(CFrame.new(), .2)
+
+	if humanoid.WalkSpeed == 6 then
+		humanoid.WalkSpeed = 16
+	end
+end
+
+function gun:AddShootingAnimations(viewmodel) -- Intialises the multiple shooting animations, such as camera shake, moving the gun, creating a muzzle flash and playing the firing sound.
+	local ammoFolder = player:FindFirstChild('Ammo'):FindFirstChild(viewmodel.Name)
+	local magazine = ammoFolder:FindFirstChild('Magazine')
+	
+	if player and player.Character and magazine.Value > 0 then
+		local camera = workspace.CurrentCamera
+		local character = player.Character
+		local humanoid = character:FindFirstChildWhichIsA('Humanoid')
+		local config = require(framework["Weapon Settings"]:FindFirstChild(viewmodel.Name))
+
+		
+		local sound = Instance.new('Sound')
+		sound.Parent = viewmodel
+		sound.PlayOnRemove = true
+		sound.SoundId = config['Firing Sound']
+		sound.Volume = 4
+		sound:Destroy()
+		
+		local camOffsetX = math.random(-100, 100) / 100
+		local camOffsetY = math.random(-100, 100) / 100
+		local final = Vector3.new(camOffsetX, camOffsetY, 0)
+		
+		local tweenTo = TweenService:Create(humanoid, TweenInfo.new(0.03, Enum.EasingStyle.Circular), {CameraOffset = final})
+		local tweenFrom = TweenService:Create(humanoid, TweenInfo.new(0.15, Enum.EasingStyle.Back), {CameraOffset = Vector3.new(0, 0, 0)})
+		
+		tweenTo:Play()
+		tweenTo.Completed:Once(function()
+			tweenFrom:Play()
+		end)
+		
+		local light = Instance.new('PointLight')
+		light.Parent = viewmodel.barrel
+		
+		light.Brightness = 10
+		light.Range = 20
+		light.Color = Color3.fromRGB(255, 247, 7)
+		
+		Debris:AddItem(light, 0.1)
+		
+		coroutine.wrap(vmRecoil)() -- Initialises the viewmodel recoil in a separate thread.
+	end
+end
+
+function gun:ShootBullet(viewmodel) -- Shoots a raycast, and sending the results off to the server to be processed.
+	local params = RaycastParams.new()
+
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {player.Character}
+	
+	if not viewmodel then
+		return
+	end
+	
+	local barrel = viewmodel:FindFirstChild('barrel')
+	local origin = barrel:FindFirstChild('origin')
+	local pathway = barrel:FindFirstChild('pathway')
+	local direction = camera.CFrame.LookVector
+	
+	local rayResults = workspace:Raycast(origin.WorldPosition, direction * 1000, params)
+	local rayInstance
+	local rayPosition
+	
+	if rayResults then
+		rayInstance = rayResults.Instance
+		rayPosition = rayResults.Position
+	end
+	
+	local ammoFolder = player:FindFirstChild('Ammo'):FindFirstChild(viewmodel.Name)
+	local magazine = ammoFolder:FindFirstChild('Magazine')
+	
+	if magazine.Value > 0 then
+		events.FireGun:FireServer(viewmodel.Name, rayInstance, rayPosition)
+	end
+end
+
+function gun:AttemptReload(viewModel) -- Attempts a reload by checking how much ammo is in the magazine, comparing it to the maximum ammo allowed and requests the server to change the value if all conditions are passed.
+	local ammoFolder = player:FindFirstChild('Ammo'):FindFirstChild(viewModel.Name)
+	local magazine = ammoFolder:FindFirstChild('Magazine')
+	
+	local weaponSettings = require(framework["Weapon Settings"]:FindFirstChild(viewModel.Name))
+	local maxAmmo = weaponSettings['Magazine Size']
+
+	if magazine.Value < maxAmmo then
+		events.Reload:FireServer(viewModel.Name)
+	end
+end
+
+function gun:RemoveViewmodels() -- Removes all viewmodels of the players camera, and resets the camera back to the default.
+	for i,v in pairs(camera:GetChildren()) do
+		if v:GetAttribute('IsViewmodel') then
+			v:Destroy()
+			player.CameraMode = Enum.CameraMode.Classic
+		end
+	end
+	
+	player.Character:WaitForChild('Humanoid').WalkSpeed = 16
+end
+
+
+return gun
