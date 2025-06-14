@@ -1,0 +1,264 @@
+local server = {}
+
+---- SHORTCUT VARIABLES ----
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local PhysicsService = game:GetService('PhysicsService')
+local Debris = game:GetService('Debris')
+local TweenService = game:GetService('TweenService')
+local Players = game:GetService('Players')
+
+local framework = ReplicatedStorage["FPS Framework"]
+local damages = require(framework.Modules.Damage)
+local effects = require(framework.Modules.Effects)
+
+local CFrameTracking = {} -- A dictionary dedicated to tracking CFrame Offsets of their associated viewmode.
+
+Players.PlayerAdded:Connect(function(player) -- Function responsible for assigning CFrame offsets to each player.
+	CFrameTracking[player.Name] = {
+		['RecoilCF'] = CFrame.new();
+		['AimCF'] = CFrame.new();
+	}
+end)
+
+function server:CreateAmmoStorage(player) -- Creates a folder dedicated to tracking each players ammo for each gun. Made a folder instead of dictionary so it can be easily accessed across multiple scripts.
+	local ammo = Instance.new('Folder')
+	ammo.Parent = player
+	ammo.Name = 'Ammo'
+	
+	for i,v in pairs(player.Backpack:GetChildren()) do -- Loops through each tool in a players backpack, check if its a gun and creates a value for it.
+		if v:IsA('Tool') and v:GetAttribute('IsGun') then
+			if not framework["Weapon Settings"]:FindFirstChild(v.Name) then
+				warn(v.Name.. ' Passed IsGun Condition')
+				return
+			end
+			local weaponSettings = require(framework["Weapon Settings"]:FindFirstChild(v.Name))
+			
+			local gun = Instance.new('Folder')
+			gun.Name = v.Name
+			gun.Parent = ammo
+			
+			local magazine = Instance.new('IntValue')
+			magazine.Parent = gun
+			magazine.Name = 'Magazine'
+			magazine.Value = weaponSettings['Magazine Size']
+			
+			local caliber = Instance.new('StringValue') 
+			caliber.Name = 'Caliber'
+			caliber.Value = weaponSettings['Caliber']
+			caliber.Parent = gun
+			
+		end
+	end
+	
+end
+
+function server:BulletHit(instance, position, gun) -- creates a hitmarker for the raycasts, and damages what it hit.
+	local color = Color3.new(0.494118, 0.494118, 0.494118)
+
+	local smoke = framework.Templates.Smoke:Clone()
+	smoke.Parent = workspace
+	smoke.Position = position
+	smoke.ParticleEmitter.Speed = NumberRange.new(0.75)
+	
+	if instance.Parent:FindFirstChild('Humanoid') then
+		local humanoid = instance.Parent:FindFirstChild('Humanoid')
+		local player = Players:FindFirstChild(humanoid.Parent.Name)
+		
+		humanoid:TakeDamage(damages[instance.Name]) --Add Modules for Guns
+		
+		if humanoid.Health <= 0 then
+			server:RagdollPlayer(humanoid.Parent)
+		end
+		
+		color = Color3.new(0.847059, 0.00392157, 0.00392157)
+	end
+	
+	task.wait(0.01)
+	smoke.ParticleEmitter.Color = ColorSequence.new(color)
+	smoke.ParticleEmitter:Emit(3)
+	Debris:AddItem(smoke, 2)
+end
+
+function server:SearchForViewmodel(character) -- Searches for a viewmodel by looking for a model with the attribute 'IsViewmodel'.
+	for i,v in pairs(character:GetChildren()) do
+		if v:IsA('Model') and v:GetAttribute('IsViewmodel') then
+			return v
+		end
+	end
+	
+	warn('Unable to find Viewmodel!')
+end
+
+function server:RagdollPlayer(character) -- function that creates a ragdoll by connecting each limb with a ball socket constraint, and movement.
+	local humanoid = character:WaitForChild('Humanoid')
+	local torso = character:WaitForChild('Torso')
+	local root = character:WaitForChild('HumanoidRootPart')
+
+	-- enabling required settings --
+	humanoid.BreakJointsOnDeath = false
+	humanoid.RequiresNeck = false
+	humanoid.PlatformStand = true
+
+	-- creating socket joints --
+
+	for _ ,joint in pairs(torso:GetChildren()) do
+		if joint:IsA('Motor6D') then
+			local socket = Instance.new('BallSocketConstraint')
+			local a1 = Instance.new('Attachment')
+			local a2 = Instance.new('Attachment')
+			a1.Parent = joint.Part0
+			a2.Parent = joint.Part1
+			socket.Parent = joint.Parent
+			socket.Attachment0 = a1
+			socket.Attachment1 = a2
+			a1.CFrame = joint.C0
+			a2.CFrame = joint.C1
+			socket.LimitsEnabled = true
+			socket.TwistLimitsEnabled = true
+			joint:Destroy()
+		end
+	end
+
+	task.wait(0.1)
+	humanoid.Health = 0
+end
+
+function server:CreateServerSideViewModel(character, viewModel) -- Creates a gun viewmodel for a player, for others to see and to be synced the client-side viewmodel.
+	local prevViewmodel = server:SearchForViewmodel(character)
+	if prevViewmodel then
+		prevViewmodel:Destroy()
+	end
+	
+	local viewModel = framework.Viewmodels:FindFirstChild(viewModel):Clone()
+	viewModel.Parent = character
+	
+	for i,v in pairs(character:GetDescendants()) do
+		if v:IsA('BasePart') then
+			v.CollisionGroup = 'Player'
+		end
+	end
+	
+	character['Left Arm'].Transparency = 1
+	character['Right Arm'].Transparency = 1
+	
+	viewModel['Left Arm'].CollisionGroup = 'Viewmodel'
+	viewModel['Right Arm'].CollisionGroup = 'Viewmodel'
+	
+	local shirt = character:FindFirstChildWhichIsA('Shirt'):Clone()
+	shirt.Parent = viewModel
+	
+	for i,v in pairs(viewModel:GetDescendants()) do
+		if v:IsA('SurfaceGui') then
+			v.Enabled = false
+		end
+	end
+	
+	return viewModel
+end
+
+function server:DestroyViewmodel(player) -- Destrots all server-side viewmodels.
+	local viewModel = server:SearchForViewmodel(player.Character)
+	local humanoid = player.Character:WaitForChild('Humanoid')
+	if viewModel then
+		viewModel:Destroy()
+	end
+	
+	player.Character['Left Arm'].Transparency = 0
+	player.Character['Right Arm'].Transparency = 0
+	
+	for i,v in pairs(humanoid:GetPlayingAnimationTracks()) do -- Stops the players aiming animation, for when they change guns whilst aiming.
+		if v.Name == 'TPS_Aiming' then
+			v:Stop()
+		end
+	end
+end
+
+function server:UpdateServerSideViewModel(player, rayEnd) -- Updates the CFrame of the server-side viewmodel according to the client-sided viewmodel, by firing a raycast through the camera and using that raycast to determine the needed CFrame.
+	local viewModel = server:SearchForViewmodel(player.Character)
+	if not viewModel then
+		warn('Missing Viewmodel!')
+		return
+	end
+
+	viewModel.PrimaryPart.CFrame = CFrame.new(player.Character.Head.Position, rayEnd) * CFrameTracking[player.Name]['RecoilCF'] * CFrameTracking[player.Name]['AimCF'] -- Assigns the position of the viewmodel, and adds the previous offsets to the final position.
+end
+
+function server:DisableArmCollision() -- Disables the collision between the viewmodel and player via collision groups.
+	PhysicsService:RegisterCollisionGroup('Viewmodel')
+	PhysicsService:RegisterCollisionGroup('Player')
+	PhysicsService:CollisionGroupSetCollidable('Viewmodel', 'Player', false)
+end
+
+function server:Reload(player, gunName) -- Reloads the players gun by setting its value to the maximum magazine size forthat gun.
+	local ammoFolder = player:FindFirstChild('Ammo'):FindFirstChild(gunName)
+	local magazine = ammoFolder:FindFirstChild('Magazine')
+
+	local weaponSettings = require(framework["Weapon Settings"]:FindFirstChild(gunName))
+	local maxAmmo = weaponSettings['Magazine Size']
+
+	if magazine.Value < maxAmmo then
+		magazine.Value = maxAmmo
+	end
+end
+
+function server:AddServerFireAnimations(player, viewModel) -- Initites the server-sided firing animation.
+	for i,v in Players:GetChildren() do
+		if v ~= player then
+			framework["Remote Events"].ReplicateGunshot:FireClient(v, viewModel)
+		end
+	end
+	
+	local function vmRecoil() -- Creates an offset for the final viewmodel position, moving the viewModel back suddenly imitating strong, sharp recoil.
+		CFrameTracking[player.Name]['RecoilCF'] += Vector3.new(0, 0, 0.4) -- Applies recoil
+
+		for i = 1, 20 do -- Slowly reduces the recoil offset over 20 frames.
+			CFrameTracking[player.Name]['RecoilCF'] -= Vector3.new(0, 0 , 0.02)
+			task.wait()
+		end
+	end
+	
+	coroutine.wrap(vmRecoil)() -- Wraps the recoil function in a coroutine to run it asynchronously.
+end
+
+function server:AddAimAnimations(player, viewModel, toggle) -- Creates the Aim animations for the player, and the offsets for the viewmodel.
+	
+	if toggle == true then
+		local humanoid = player.Character:WaitForChild('Humanoid')
+		local animation = Instance.new('Animation')
+		animation.Parent = viewModel
+		animation.AnimationId = 'rbxassetid://110607086763647' -- Plays an animation of a character tilting his head, looking through a scope or sight.
+		animation.Name = 'TPS_Aiming'
+		
+		local track = humanoid:LoadAnimation(animation)
+		track:Play()
+		
+		track.Ended:Connect(function()
+			animation:Destroy()
+		end)
+		
+		local endCFrame = CFrame.new(Vector3.new(0, 0, 1.25)) -- Applies the aim offset to the viewmodel.
+	
+		for i = 1, 30 do -- Gradually applies the offset over 30 frames.
+			CFrameTracking[player.Name]['AimCF'] = CFrameTracking[player.Name]['AimCF']:Lerp(endCFrame, 0.0333333)
+			task.wait(0.01)
+		end
+	else
+		local humanoid = player.Character:WaitForChild('Humanoid')
+		
+		for i,v in pairs(humanoid:GetPlayingAnimationTracks()) do -- Stops the aiming animation (head tilt)
+			if v.Name == 'TPS_Aiming' then
+				v:Stop()
+				v:Destroy()
+			end
+		end
+		
+		local endCFrame = CFrame.new() -- defines the target
+
+		for i = 1, 30 do -- gradually reduces the offset until there isn't one.
+			CFrameTracking[player.Name]['AimCF'] = CFrameTracking[player.Name]['AimCF']:Lerp(endCFrame, 0.0333333)
+			task.wait(0.01)
+		end
+	end
+end
+
+return server
